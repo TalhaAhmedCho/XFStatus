@@ -1,15 +1,27 @@
 name: Xbox Friend Status
 
 on:
-  workflow_dispatch:        # manual run option
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 🔑 private repo access + push allow
 
 jobs:
   xfstatus:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      # 🔹 Main repo checkout (current repo)
+      - name: Checkout main repo
         uses: actions/checkout@v4
+
+      # 🔹 Private repo checkout (for xuids.txt + ApiData.json push)
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PREPO_NAME }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: private_repo
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,7 +36,5 @@ jobs:
       - name: Run script
         env:
           API_KEY: ${{ secrets.API_KEY }}
-          PA_TOKEN: ${{ secrets.PA_TOKEN }}
-          PREPO_NAME: ${{ secrets.PREPO_NAME }}
         run: |
           python -u status.py
