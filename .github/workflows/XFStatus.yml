@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.PREPO_NAME }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PA_TOKEN }}
           path: private_repo
 
       - name: Set up Python
@@ -36,5 +36,7 @@ jobs:
       - name: Run script
         env:
           API_KEY: ${{ secrets.API_KEY }}
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}
         run: |
           python -u status.py
