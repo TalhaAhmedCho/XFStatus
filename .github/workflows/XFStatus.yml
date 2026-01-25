@@ -24,6 +24,7 @@ jobs:
       - name: Run script
         env:
           API_KEY: ${{ secrets.API_KEY }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}
         run: |
-          python status.py
+          python -u status.py
