@@ -13,7 +13,6 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
-XUIDS_FILE_LINK = require_env("XUIDS_FILE_LINK")
 
 CLONE_DIR = "private_repo"
 
