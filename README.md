@@ -1,4 +1,4 @@
-# XFStatus — Xbox Friend Status Exporter (GitHub Actions + xbl.io)
+## XFStatus — Xbox Friend Status Exporter (GitHub Actions + xbl.io)
 
 A small automation that:
 
@@ -12,7 +12,7 @@ A small automation that:
 
 ---
 
-## What you get
+### What you get
 
 - **Single JSON output**: `ApiData.json` (array of users)
 - **Presence merge**:
@@ -23,7 +23,7 @@ A small automation that:
 
 ---
 
-## Repo structure
+### Repo structure
 
 ```text
 .
@@ -35,7 +35,7 @@ A small automation that:
 
 ---
 
-## How it works (high level)
+### How it works (high level)
 
 1. The workflow runs `python status.py`.
 2. `status.py` loads required environment variables.
@@ -50,21 +50,21 @@ A small automation that:
 
 ---
 
-## Requirements
+### Requirements
 
-### Runtime
+#### Runtime
 
 - Python **3.11+**
 - `requests`
 
-### Accounts/Keys
+#### Accounts/Keys
 
 - xbl.io API key
 - A GitHub Personal Access Token (PAT) that can read/write your **private** repo
 
 ---
 
-## Environment variables
+### Environment variables
 
 `status.py` requires these:
 
@@ -76,7 +76,7 @@ A small automation that:
 
 ---
 
-## Private repo expected files
+### Private repo expected files
 
 Your private repo **must** contain:
 
@@ -94,9 +94,9 @@ Each line should be a single XUID.
 
 ---
 
-## Setup: GitHub Actions (recommended)
+### Setup: GitHub Actions (recommended)
 
-### 1) Add repository secrets
+#### 1) Add repository secrets
 
 Go to:
 
@@ -108,7 +108,7 @@ Add:
 - `PA_TOKEN` — your GitHub PAT (see next section)
 - `PREPO_NAME` — like `OWNER/REPO`
 
-### 2) Create a GitHub PAT (for private repo push)
+#### 2) Create a GitHub PAT (for private repo push)
 
 Create a PAT from GitHub settings.
 
@@ -121,22 +121,22 @@ Security notes:
 - Treat `PA_TOKEN` like a password
 - Store it only in GitHub Secrets (never commit it)
 
-### 3) Run the workflow
+#### 3) Run the workflow
 
 Open the Actions tab → **Xbox Friend Status** → **Run workflow**.
 
 ---
 
-## Setup: Run locally (optional)
+### Setup: Run locally (optional)
 
-### 1) Install dependencies
+#### 1) Install dependencies
 
 ```bash
 python -m pip install --upgrade pip
 pip install requests
 ```
 
-### 2) Export env vars
+#### 2) Export env vars
 
 PowerShell example:
 
@@ -146,7 +146,7 @@ $env:PA_TOKEN = "github_pat_..."
 $env:PREPO_NAME = "OWNER/REPO"
 ```
 
-### 3) Run
+#### 3) Run
 
 ```bash
 python -u status.py
@@ -159,7 +159,7 @@ Output:
 
 ---
 
-## Output format notes
+### Output format notes
 
 `ApiData.json` is an array of user objects returned from xbl.io, with extra fields when presence is available:
 
@@ -172,9 +172,9 @@ If a user has no `lastSeen`, the script keeps the original user payload.
 
 ---
 
-## Troubleshooting
+### Troubleshooting
 
-### Missing env var errors
+#### Missing env var errors
 
 If you see:
 
@@ -185,13 +185,13 @@ Make sure you set the secret/env var in:
 - GitHub Actions Secrets, or
 - Your local shell environment
 
-### Git clone/push failures
+#### Git clone/push failures
 
 - Confirm `PREPO_NAME` is exactly `OWNER/REPO`
 - Confirm your PAT has private repo access (`repo`)
 - Confirm the private repo exists and is reachable
 
-### xbl.io API errors / empty data
+#### xbl.io API errors / empty data
 
 - Verify `API_KEY` is valid
 - Check xbl.io rate limits
@@ -199,7 +199,7 @@ Make sure you set the secret/env var in:
 
 ---
 
-## Security checklist
+### Security checklist
 
 - Never commit tokens or keys
 - Prefer GitHub Secrets for CI
@@ -207,13 +207,13 @@ Make sure you set the secret/env var in:
 
 ---
 
-## FAQ
+### FAQ
 
-### Why clone a private repo instead of storing XUIDs here?
+#### Why clone a private repo instead of storing XUIDs here?
 
 To avoid storing sensitive identifiers in a public repo and to keep `xuids.txt` managed privately.
 
-### Can this run on a schedule?
+#### Can this run on a schedule?
 
 Yes. You can add `schedule:` in the workflow. Example:
 
@@ -228,7 +228,7 @@ on:
 
 ---
 
-## Roadmap ideas (optional)
+### Roadmap ideas (optional)
 
 - Add retry + better error handling for network calls
 - Cache presence lookups / reduce API calls
@@ -237,6 +237,6 @@ on:
 
 ---
 
-## License
+### License
 
 Add a license if you plan to share this publicly.
