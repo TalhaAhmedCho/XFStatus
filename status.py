@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 
-# ================== ENV ==================
+# ================= ENV =================
 def require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -23,14 +23,14 @@ PREPO_NAME = require_env("PREPO_NAME")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 
-# ================== PATHS ==================
+# ================= PATHS =================
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
 OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
 
 
-# ================== CONFIG ==================
+# ================= CONFIG =================
 SLEEP_BETWEEN_REQUESTS = 2.5
 MAX_RETRIES = 3
 RETRY_BACKOFF = 5
@@ -42,30 +42,33 @@ headers = {
 }
 
 
-# ================== GIT ==================
+# ================= GIT =================
 def clone_or_update_repo():
     if CLONE_DIR.exists():
         shutil.rmtree(CLONE_DIR, ignore_errors=True)
 
     subprocess.run(
-        ["git", "config", "--global",
-         "url.https://x-access-token:" + PA_TOKEN + "@github.com/.insteadOf",
-         "https://github.com/"],
+        [
+            "git", "config", "--global",
+            f"url.https://x-access-token:{PA_TOKEN}@github.com/.insteadOf",
+            "https://github.com/"
+        ],
         check=True
     )
+
     subprocess.run(
         ["git", "clone", f"https://github.com/{PREPO_NAME}.git", str(CLONE_DIR)],
         check=True
     )
 
 
-# ================== DATA ==================
+# ================= DATA =================
 def read_xuids() -> List[str]:
     with open(XUID_FILE, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
 
-def fetch_with_retry(url: str, desc: str) -> Any:
+def fetch_with_retry(url: str) -> Any:
     for attempt in range(MAX_RETRIES + 1):
         try:
             r = requests.get(url, headers=headers, timeout=25)
@@ -82,16 +85,16 @@ def fetch_all(xuids: List[str]):
     ids = ",".join(xuids)
 
     people = fetch_with_retry(
-        f"https://xbl.io/api/v2/account/{ids}", "Account"
+        f"https://xbl.io/api/v2/account/{ids}"
     ).get("people", [])
 
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
     presence_raw = fetch_with_retry(
-        f"https://xbl.io/api/v2/{ids}/presence", "Presence"
+        f"https://xbl.io/api/v2/{ids}/presence"
     )
-    presence = presence_raw if isinstance(presence_raw, list) else presence_raw.get("presence", [])
 
+    presence = presence_raw if isinstance(presence_raw, list) else presence_raw.get("presence", [])
     return people, presence
 
 
@@ -107,7 +110,7 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
     ]
 
 
-# ================== DISCORD ==================
+# ================= DISCORD =================
 def send_discord_message(user: Dict):
     if not DISCORD_WEBHOOK:
         return
@@ -129,10 +132,9 @@ def send_discord_message(user: Dict):
         if devices:
             device = devices[0].get("type", "Unknown")
 
-        presence_text = account.get("presenceText", "")
-        presence_state = account.get("presenceState", "")
-
-        lines.append(f"{device} - {presence_text} - {presence_state}")
+        lines.append(
+            f"{device} - {account.get('presenceText', '')} - {account.get('presenceState', '')}"
+        )
 
     embed = {
         "author": {
@@ -144,14 +146,10 @@ def send_discord_message(user: Dict):
         "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
-    requests.post(
-        DISCORD_WEBHOOK,
-        json={"embeds": [embed]},
-        timeout=10
-    )
+    requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]}, timeout=10)
 
 
-# ================== PREVIOUS STATE ==================
+# ================= PREVIOUS STATE =================
 def load_previous_data() -> Dict[str, Dict]:
     try:
         subprocess.run(
@@ -183,7 +181,7 @@ def load_previous_data() -> Dict[str, Dict]:
         )
 
 
-# ================== MAIN ==================
+# ================= MAIN =================
 def main():
     original_dir = Path.cwd()
 
@@ -205,12 +203,8 @@ def main():
                 continue
 
             current_state = presence_now.get("state", "Offline")
-
             prev_user = prev_data.get(xuid)
-            prev_state = (
-                prev_user.get("presence", {}).get("state")
-                if prev_user else None
-            )
+            prev_state = prev_user.get("presence", {}).get("state") if prev_user else None
 
             if prev_state is not None and current_state != prev_state:
                 send_discord_message(user)
@@ -221,6 +215,11 @@ def main():
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
         os.chdir(CLONE_DIR)
+
+        # 🔑 FIX: Git identity set
+        subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
+        subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
+
         subprocess.run(["git", "add", OUTPUT_FILE], check=True)
 
         if subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
