@@ -2,11 +2,11 @@ name: Xbox Friend Status
 
 on:
   workflow_dispatch:          # manual trigger
-  # schedule:                 # চাইলে cron যোগ করো, যেমন:
-  #   - cron: '0 */2 * * *'   # প্রতি ২ ঘণ্টায় (rate limit মাথায় রেখে)
+  # schedule:                 # চাইলে cron যোগ করো (rate limit মাথায় রেখে)
+  #   - cron: '0 */6 * * *'   # প্রতি ৬ ঘণ্টায় (যেমন দিনে ৪ বার)
 
 permissions:
-  contents: write             # repo-তে write access দরকার
+  contents: write
 
 jobs:
   update-xbox-status:
@@ -25,17 +25,10 @@ jobs:
         run: |
           rm -rf private_repo 2>/dev/null || true
           
-          # Credential helper set (token URL-এ না দেখানোর জন্য)
+          # Credential helper to avoid leaking PAT in logs
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
           
-          # Clone
           git clone https://github.com/${PREPO_NAME}.git private_repo
-          
-          # Optional: যদি শুধু xuids.txt লাগে → sparse checkout
-          # cd private_repo
-          # git sparse-checkout init --cone
-          # git sparse-checkout set xuids.txt ApiData.json ApiData_previous.json
-          # git checkout
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -50,30 +43,33 @@ jobs:
       - name: Run Python script (fetch & update status)
         env:
           API_KEY: ${{ secrets.API_KEY }}
-          PA_TOKEN: ${{ secrets.PA_TOKEN }}           # script-এ git push-এর জন্য
-          PREPO_NAME: ${{ secrets.PREPO_NAME }}       # optional
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}  # Discord notification-এর জন্য
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}  # Discord notification
         run: python -u status.py
 
       - name: Fallback - Commit & push if script failed or missed
-        if: always()   # script fail করলেও চেষ্টা করবে
+        if: always()  # script fail করলেও চেষ্টা করবে
         env:
           PAT: ${{ secrets.PA_TOKEN }}
         run: |
           cd private_repo || exit 0
           
+          # Mark as safe directory
+          git config --global --add safe.directory "$(pwd)"
+          
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           
-          # Add changed files
-          git add ApiData.json ApiData_previous.json || true
+          # Only add ApiData.json (no previous file)
+          git add ApiData.json || true
           
           # Timestamped commit message
           NOW=$(date '+%Y-%m-%d %H:%M:%S %Z')
           COMMIT_MSG="Update Xbox friend status [auto] - $NOW (fallback)"
           
-          git diff --quiet || git commit -m "$COMMIT_MSG"
+          git diff --quiet ApiData.json || git commit -m "$COMMIT_MSG"
           
-          # Push using credential helper
+          # Push with credential helper
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
           git push origin HEAD:main || echo "No changes to push or push failed"
