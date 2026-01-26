@@ -4,6 +4,7 @@ import subprocess
 import shutil
 import requests
 import time
+import datetime
 from pathlib import Path
 from typing import List, Dict, Union, Any
 
@@ -132,7 +133,6 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
             if "timestamp" in last_seen:
                 merged["lastSeenDateTimeUtc"] = last_seen["timestamp"]
 
-            # Insert after isXbox360Gamerpic if exists, else at end
             new_merged = {}
             inserted = False
             for k, v in merged.items():
@@ -188,7 +188,10 @@ def main():
         )
 
         if status_result.stdout.strip():
-            subprocess.run(["git", "commit", "-m", "Update ApiData.json [auto]"], check=True)
+            # ← এখানে timestamp যোগ করা হয়েছে
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            commit_msg = f"Update ApiData.json [auto] - {now}"
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True)
             subprocess.run(["git", "push"], check=True)
             print("✅ Changes committed and pushed")
         else:
