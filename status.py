@@ -97,12 +97,11 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
         if not xuid:
             continue
 
-        merged = user.copy()  # Account API result → root level
-
-        # Presence API result → root level-এই যোগ হবে (no nesting)
-        presence = presence_map.get(xuid, {})
-        if presence:
-            merged.update(presence)  # পুরো presence dict root-এ যোগ হবে
+        merged = {
+            "xuid": xuid,
+            "account": user,                         # 👈 Account API result
+            "presence": presence_map.get(xuid, {})   # 👈 Presence API result
+        }
 
         final.append(merged)
 
