@@ -97,31 +97,12 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
         if not xuid:
             continue
 
+        merged = user.copy()  # Account API result → root level
+
+        # Presence API result → full under presenceDetails
         presence = presence_map.get(xuid, {})
-
-        merged = user.copy()
-
-        # Root level: presenceState
-        merged["presenceState"] = presence.get("state", "Offline")
-
-        # Root level: lastSeenDateTimeUtc (single timestamp)
-        if "lastSeen" in presence and "timestamp" in presence["lastSeen"]:
-            merged["lastSeenDateTimeUtc"] = presence["lastSeen"]["timestamp"]
-
-        # presenceDetails: nested object
-        presence_details = {}
-
-        # Devices if online
-        if merged["presenceState"] == "Online" and "devices" in presence:
-            presence_details["devices"] = presence["devices"]
-
-        # lastSeen without timestamp (no duplicate)
-        if "lastSeen" in presence:
-            last_seen_copy = presence["lastSeen"].copy()
-            last_seen_copy.pop("timestamp", None)  # remove timestamp from nested
-            presence_details["lastSeen"] = last_seen_copy
-
-        merged["presenceDetails"] = presence_details
+        if presence:
+            merged["presenceDetails"] = presence
 
         final.append(merged)
 
