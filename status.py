@@ -98,9 +98,8 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
             continue
 
         merged = {
-            "xuid": xuid,
-            "account": user,                         # 👈 Account API result
-            "presence": presence_map.get(xuid, {})   # 👈 Presence API result
+            "account": user,                         # Account API result
+            "presence": presence_map.get(xuid, {})   # Presence API result
         }
 
         final.append(merged)
