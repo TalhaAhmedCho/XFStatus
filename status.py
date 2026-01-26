@@ -120,7 +120,10 @@ def send_discord_message(user: Dict):
 
     gamertag = account.get("gamertag", "Unknown")
     avatar = account.get("displayPicRaw")
-    state = presence.get("state", "Offline")
+    state = presence.get("state")
+
+    if not state:
+        return
 
     color = 0x00ff00 if state == "Online" else 0xff0000
 
@@ -143,6 +146,7 @@ def send_discord_message(user: Dict):
         },
         "description": "\n".join(lines),
         "color": color,
+        "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
     requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]}, timeout=10)
@@ -201,11 +205,17 @@ def main():
             if not xuid:
                 continue
 
-            current_state = presence_now.get("state", "Offline")
-            prev_user = prev_data.get(xuid)
-            prev_state = prev_user.get("presence", {}).get("state") if prev_user else None
+            current_state = presence_now.get("state")
+            if not current_state:
+                continue  # 🔒 state না থাকলে ignore
 
-            if prev_state is not None and current_state != prev_state:
+            prev_user = prev_data.get(xuid)
+            prev_state = (
+                prev_user.get("presence", {}).get("state")
+                if prev_user else None
+            )
+
+            if prev_state and current_state != prev_state:
                 send_discord_message(user)
 
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -215,7 +225,6 @@ def main():
 
         os.chdir(CLONE_DIR)
 
-        # 🔑 FIX: Git identity set
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
         subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
 
