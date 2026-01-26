@@ -167,7 +167,6 @@ def send_discord_message(user: Dict):
         },
         "description": "\n".join(lines),
         "color": color,
-        "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
     requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]}, timeout=10)
