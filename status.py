@@ -17,14 +17,12 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")  # ← নতুন: optional, না থাকলে skip
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")  # optional
 
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
-PREV_FILE = "ApiData_previous.json"          # ← নতুন: previous state
-OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
-PREV_IN_REPO = CLONE_DIR / PREV_FILE
+PREV_FILE = "ApiData_previous.json"
 
 SLEEP_BETWEEN_REQUESTS = 2.5
 MAX_RETRIES = 3
@@ -76,15 +74,10 @@ def fetch_with_retry(url: str, desc: str, retries: int = MAX_RETRIES) -> Any:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
-            status = e.response.status_code if e.response else None
+            status = getattr(e.response, 'status_code', None)
             print(f"Attempt {attempt+1}/{retries+1} failed for {desc}: {e}")
             if status:
                 print(f"   Status: {status}")
-            if e.response:
-                try:
-                    print(f"   Response snippet: {e.response.text[:300]}")
-                except:
-                    pass
             if attempt < retries:
                 sleep_time = RETRY_BACKOFF * (2 ** attempt)
                 print(f"   Retrying in {sleep_time}s...")
@@ -150,16 +143,24 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
     return final
 
+def get_username(user: Dict) -> str:
+    return (
+        user.get("gamertag") or
+        user.get("displayName") or
+        user.get("realName") or
+        "Unknown User"
+    )
+
 def send_discord_message(username: str, status: str, details: str = ""):
     if not DISCORD_WEBHOOK:
         print("DISCORD_WEBHOOK_URL not set → skipping Discord message")
         return
 
-    color = 0x00ff00 if "Online" in status else 0xff0000
+    color = 0x00ff00 if status == "Online" else 0xff0000
 
     embed = {
-        "title": f"{username}",
-        "description": f"**{status}**\n{details}",
+        "title": username,
+        "description": f"**{status}**\n{details}".strip(),
         "color": color,
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "footer": {"text": "XFStatus Auto Update"}
@@ -170,9 +171,9 @@ def send_discord_message(username: str, status: str, details: str = ""):
     try:
         resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
         resp.raise_for_status()
-        print(f"Discord message sent for {username}: {status}")
+        print(f"Discord message sent: {username} - {status}")
     except Exception as e:
-        print(f"Failed to send Discord message: {e}")
+        print(f"Discord send failed: {e}")
 
 def main():
     original_dir = Path.cwd()
@@ -186,12 +187,11 @@ def main():
 
         print("Starting API fetches...")
         people, presence = fetch_all(xuids)
-
         print(f"Got {len(people)} user info entries, {len(presence)} presence entries")
 
         final_data = merge_data(people, presence)
 
-        # Load previous data if exists
+        # Load previous data for comparison
         prev_data = {}
         prev_path = CLONE_DIR / PREV_FILE
         if prev_path.exists():
@@ -199,20 +199,21 @@ def main():
                 prev_list = json.load(f)
                 prev_data = {u.get("xuid"): u for u in prev_list if u.get("xuid")}
 
-        # Check for status changes and send messages
+        # Check status changes
         for user in final_data:
             xuid = user.get("xuid")
             if not xuid:
                 continue
 
-            gamertag = user.get("gamertag", "Unknown")
-            current_online = bool(user.get("lastSeenDateTimeUtc"))  # rough check
+            username = get_username(user)
+            current_state = user.get("presenceState", "Offline")
 
             prev_user = prev_data.get(xuid, {})
-            prev_online = bool(prev_user.get("lastSeenDateTimeUtc"))
+            prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
 
-            if current_online != prev_online or not prev_user:  # change or first time
-                if current_online:
+            # Only send if status changed or first time
+            if current_state != prev_state or not prev_user:
+                if current_state == "Online":
                     status_text = "Online"
                     details = ""
                 else:
@@ -222,7 +223,7 @@ def main():
                     status_text = "Offline"
                     details = f"{device} - {game}"
 
-                send_discord_message(gamertag, status_text, details)
+                send_discord_message(username, status_text, details)
 
         # Save current as latest
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
