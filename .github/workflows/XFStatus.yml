@@ -40,7 +40,7 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           PA_TOKEN: ${{ secrets.PA_TOKEN }}
           PREPO_NAME: ${{ secrets.PREPO_NAME }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           python -u status.py
 
