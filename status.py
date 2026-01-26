@@ -99,10 +99,10 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
         merged = user.copy()  # Account API result → root level
 
-        # Presence API result → full under presenceDetails
+        # Presence API result → full at root level (no nesting)
         presence = presence_map.get(xuid, {})
         if presence:
-            merged["presenceDetails"] = presence
+            merged.update(presence)  # পুরো presence dict root-এ যোগ হবে (duplicate keys override হবে না, কারণ update করে দিব)
 
         final.append(merged)
 
@@ -178,10 +178,10 @@ def main():
                 continue
 
             username = get_username(user)
-            current_state = user.get("presenceState", "Offline")
+            current_state = user.get("state", "Offline")  # presence API-এ "state" field আছে
 
             prev_user = prev_data.get(xuid, {})
-            prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
+            prev_state = prev_user.get("state", "Offline")
 
             if prev_state is not None and current_state != prev_state:
                 if current_state == "Online":
