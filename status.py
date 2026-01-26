@@ -138,23 +138,26 @@ def send_discord_message(username: str, status: str, details: str = ""):
     except Exception as e:
         print(f"Discord failed: {e}")
 
-def load_previous_data():
+def load_previous_data() -> Dict:
     """Load ApiData.json from previous commit (HEAD~1)"""
     try:
-        # Temporary checkout to previous commit
-        subprocess.run(["git", "checkout", "HEAD~1", "--", "ApiData.json"], cwd=CLONE_DIR, check=True)
+        # Temp checkout previous commit's ApiData.json
+        subprocess.run(["git", "checkout", "HEAD~1", "--", "ApiData.json"], cwd=CLONE_DIR, check=True, capture_output=True)
         prev_path = CLONE_DIR / OUTPUT_FILE
         if prev_path.exists():
             with open(prev_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return {u.get("xuid"): u for u in data if u.get("xuid")}
         return {}
+    except subprocess.CalledProcessError:
+        print("No previous commit found → first run, no messages")
+        return {}
     except Exception as e:
-        print(f"Could not load previous data: {e}")
+        print(f"Failed to load previous data: {e}")
         return {}
     finally:
-        # Restore latest
-        subprocess.run(["git", "checkout", "HEAD", "--", "ApiData.json"], cwd=CLONE_DIR, check=False)
+        # Restore current version
+        subprocess.run(["git", "checkout", "HEAD", "--", "ApiData.json"], cwd=CLONE_DIR, check=False, capture_output=True)
 
 def main():
     original_dir = Path.cwd()
@@ -170,17 +173,20 @@ def main():
         # Load previous commit's data
         prev_data = load_previous_data()
 
-        # Check changes
+        # Check for status changes
         for user in final_data:
             xuid = user.get("xuid")
             if not xuid:
                 continue
+
             username = get_username(user)
             current_state = user.get("presenceState", "Offline")
+
             prev_user = prev_data.get(xuid, {})
             prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
 
-            if current_state != prev_state and prev_state is not None:  # change only, skip first run
+            # Only if there was a previous state and it changed
+            if prev_state is not None and current_state != prev_state:
                 if current_state == "Online":
                     send_discord_message(username, "Online")
                 else:
