@@ -143,7 +143,7 @@ def send_discord_message(user: Dict):
 
     color = 0x00ff00 if state == "Online" else 0xff0000
 
-    lines = [f"**{state}**"]
+    lines = [f"### {state}"]
 
     if state == "Online":
         presence_state = account.get("presenceState", "")
@@ -155,8 +155,10 @@ def send_discord_message(user: Dict):
             device = devices[0].get("type", "Unknown")
 
         # ✅ FINAL LOGIC
-        if presence_state == state:
-            lines.append(f"{device} - {presence_state}")
+        if presence_state == state == presence_text:
+            lines.append(f"{device}")
+        elif presence_text == state:
+            lines.append(f"{device} - {presence_text}")
         else:
             lines.append(f"{device} - {presence_text} - {presence_state}")
 
