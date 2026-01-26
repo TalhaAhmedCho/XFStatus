@@ -146,14 +146,19 @@ def send_discord_message(user: Dict):
     lines = [f"**{state}**"]
 
     if state == "Online":
+        presence_state = account.get("presenceState", "")
+        presence_text = account.get("presenceText", "")
+
         device = "Unknown"
         devices = presence.get("devices", [])
         if devices:
             device = devices[0].get("type", "Unknown")
 
-        lines.append(
-            f"{device} - {account.get('presenceText', '')} - {account.get('presenceState', '')}"
-        )
+        # ✅ FINAL LOGIC
+        if presence_state == state:
+            lines.append(f"{device} - {presence_state}")
+        else:
+            lines.append(f"{device} - {presence_text} - {presence_state}")
 
     embed = {
         "author": {
@@ -161,7 +166,8 @@ def send_discord_message(user: Dict):
             "icon_url": avatar
         },
         "description": "\n".join(lines),
-        "color": color
+        "color": color,
+        "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
     requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]}, timeout=10)
@@ -198,6 +204,7 @@ def main():
                 if prev_user else None
             )
 
+            # ✅ ONLY real state change triggers Discord
             if prev_state and current_state != prev_state:
                 send_discord_message(user)
 
