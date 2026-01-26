@@ -5,7 +5,7 @@ import shutil
 import requests
 import time
 from pathlib import Path
-from typing import Union, List, Dict
+from typing import List, Dict, Union, Any
 
 def require_env(name: str) -> str:
     value = os.getenv(name)
@@ -22,8 +22,9 @@ XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
 OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
 
-BATCH_SIZE = 8               # OpenXBL free tier-এ সাধারণত 150 req/hour → batch size ছোট রাখা ভালো
-SLEEP_BETWEEN_BATCHES = 2.5  # সেকেন্ড (rate limit safety margin)
+SLEEP_BETWEEN_REQUESTS = 2.5   # দুটো endpoint-এর মধ্যে
+MAX_RETRIES = 3                # 500/429 error-এ retry
+RETRY_BACKOFF = 5              # seconds, exponential
 
 headers = {
     "x-authorization": API_KEY,
@@ -31,26 +32,28 @@ headers = {
     "User-Agent": "GitHub-Action-XBL-Updater/1.0"
 }
 
+def mask_xuids(xuids: List[str]) -> str:
+    masked = []
+    for x in xuids:
+        if len(x) > 8:
+            masked.append(x[:4] + "****" + x[-4:])
+        else:
+            masked.append("****")
+    return ",".join(masked[:3]) + ("..." if len(xuids) > 3 else "")
 
 def clone_or_update_repo():
-    """Clone repo using credential helper to avoid leaking PAT in logs"""
     if CLONE_DIR.exists():
         print(f"Removing existing clone directory: {CLONE_DIR}")
         shutil.rmtree(CLONE_DIR, ignore_errors=True)
 
     print(f"Cloning repository: {PREPO_NAME} (safely)")
-
-    # Set global credential helper for this session
     subprocess.run(
         ["git", "config", "--global",
          "url.https://x-access-token:" + PA_TOKEN + "@github.com/.insteadOf",
          "https://github.com/"],
         check=True
     )
-
-    # Clone without token in URL
     subprocess.run(["git", "clone", f"https://github.com/{PREPO_NAME}.git", str(CLONE_DIR)], check=True)
-
 
 def read_xuids() -> List[str]:
     if not XUID_FILE.exists():
@@ -62,67 +65,55 @@ def read_xuids() -> List[str]:
     print(f"Loaded {len(xuids)} XUIDs from xuids.txt")
     return xuids
 
+def fetch_with_retry(url: str, desc: str, retries: int = MAX_RETRIES) -> Any:
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=25)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            status = e.response.status_code if e.response else None
+            print(f"Attempt {attempt+1}/{retries+1} failed for {desc}: {e}")
+            if status:
+                print(f"   Status: {status}")
+                if status == 429:
+                    print("   Rate limited - waiting longer...")
+                elif status >= 500:
+                    print("   Server error - retrying...")
+            if e.response:
+                try:
+                    print(f"   Response snippet: {e.response.text[:300]}")
+                except:
+                    pass
 
-def fetch_batch(url_template: str, xuids_batch: List[str]) -> Union[Dict, List]:
-    ids_str = ",".join(xuids_batch)
-    url = url_template.format(ids_str)
+            if attempt < retries:
+                sleep_time = RETRY_BACKOFF * (2 ** attempt)
+                print(f"   Retrying in {sleep_time}s...")
+                time.sleep(sleep_time)
+            else:
+                raise
 
-    try:
-        resp = requests.get(url, headers=headers, timeout=12)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.RequestException as e:
-        print(f"❌ API request failed for batch {xuids_batch[:3]}... : {e}")
+def fetch_all(xuids: List[str]) -> tuple[List[Dict], List[Dict]]:
+    if not xuids:
+        return [], []
 
-        status_code = None
-        if e.response is not None:
-            status_code = e.response.status_code
-            print(f"   Status code: {status_code}")
-            if status_code == 429:
-                print("   Rate limited → consider increasing SLEEP_BETWEEN_BATCHES or reducing BATCH_SIZE")
-        else:
-            print("   No response received (timeout / connection issue?)")
+    ids_str = ",".join(xuids)
+    masked = mask_xuids(xuids)
+    print(f"Fetching all {len(xuids)} users in single batch [{masked}]...")
 
-        # Optional: log full response if available
-        if e.response is not None:
-            try:
-                print("   Response body snippet:", e.response.text[:200])
-            except:
-                pass
+    # Account info
+    account_url = f"https://xbl.io/api/v2/account/{ids_str}"
+    account_data = fetch_with_retry(account_url, "Account endpoint")
+    people = account_data.get("people", []) if isinstance(account_data, dict) else []
 
-        raise  # re-raise so main can catch
+    time.sleep(SLEEP_BETWEEN_REQUESTS)
 
+    # Presence
+    presence_url = f"https://xbl.io/api/v2/{ids_str}/presence"
+    presence_data = fetch_with_retry(presence_url, "Presence endpoint")
+    presence_list = presence_data if isinstance(presence_data, list) else presence_data.get("presence", []) or []
 
-def fetch_in_batches(xuids: List[str]) -> tuple[List[Dict], List[Dict]]:
-    info_url_t = "https://xbl.io/api/v2/account/{}"
-    presence_url_t = "https://xbl.io/api/v2/{}/presence"
-
-    all_people: List[Dict] = []
-    all_presence: List[Dict] = []
-
-    for i in range(0, len(xuids), BATCH_SIZE):
-        batch = xuids[i:i + BATCH_SIZE]
-        print(f"Fetching batch {i//BATCH_SIZE + 1} ({len(batch)} users)")
-
-        # Info
-        info_data = fetch_batch(info_url_t, batch)
-        people = info_data.get("people", []) if isinstance(info_data, dict) else []
-        all_people.extend(people)
-
-        # Presence
-        presence_data = fetch_batch(presence_url_t, batch)
-        if isinstance(presence_data, list):
-            all_presence.extend(presence_data)
-        elif isinstance(presence_data, dict):
-            # fallback if wrapped
-            all_presence.extend(presence_data.get("presence", []))
-        else:
-            print(f"Warning: Unexpected presence response type: {type(presence_data)}")
-
-        time.sleep(SLEEP_BETWEEN_BATCHES)
-
-    return all_people, all_presence
-
+    return people, presence_list
 
 def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
     presence_map = {p.get("xuid", ""): p.get("lastSeen", {}) for p in presence_list if p.get("xuid")}
@@ -141,6 +132,7 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
             if "timestamp" in last_seen:
                 merged["lastSeenDateTimeUtc"] = last_seen["timestamp"]
 
+            # Insert after isXbox360Gamerpic if exists, else at end
             new_merged = {}
             inserted = False
             for k, v in merged.items():
@@ -162,20 +154,18 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
     return final
 
-
 def main():
     original_dir = Path.cwd()
-
     try:
         clone_or_update_repo()
-
         xuids = read_xuids()
+
         if not xuids:
             print("No XUIDs found → nothing to do")
             return
 
         print("Starting API fetches...")
-        people, presence = fetch_in_batches(xuids)
+        people, presence = fetch_all(xuids)
 
         print(f"Got {len(people)} user info entries, {len(presence)} presence entries")
 
@@ -185,15 +175,11 @@ def main():
             json.dump(final_data, f, indent=4, ensure_ascii=False)
 
         print(f"Data written to {OUTPUT_FILE}")
-
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
-        # Git operations
         os.chdir(CLONE_DIR)
-
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
         subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
-
         subprocess.run(["git", "add", "ApiData.json"], check=True)
 
         status_result = subprocess.run(
@@ -203,20 +189,16 @@ def main():
 
         if status_result.stdout.strip():
             subprocess.run(["git", "commit", "-m", "Update ApiData.json [auto]"], check=True)
-
-            # Push using the same credential helper (already set globally)
             subprocess.run(["git", "push"], check=True)
             print("✅ Changes committed and pushed")
         else:
-            print("No changes in ApiData.json → skipping commit/push")
+            print("No changes → skipping commit/push")
 
     except Exception as e:
         print(f"ERROR: {type(e).__name__}: {e}")
         raise
     finally:
-        # Restore original working directory
         os.chdir(original_dir)
-
 
 if __name__ == "__main__":
     main()
