@@ -89,32 +89,41 @@ def fetch_all(xuids: List[str]):
     return people, presence_list
 
 def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
-    presence_map = {p.get("xuid", ""): p.get("lastSeen", {}) for p in presence_list if p.get("xuid")}
+    # presence_map: xuid → full presence dict (state, devices, lastSeen etc.)
+    presence_map = {p.get("xuid"): p for p in presence_list if p.get("xuid")}
+
     final = []
     for user in people:
         xuid = user.get("xuid")
         if not xuid:
             continue
-        last_seen = presence_map.get(xuid, {})
+
+        presence = presence_map.get(xuid, {})
+
         merged = user.copy()
-        if last_seen:
-            if "timestamp" in last_seen:
-                merged["lastSeenDateTimeUtc"] = last_seen["timestamp"]
-            new_merged = {}
-            inserted = False
-            for k, v in merged.items():
-                new_merged[k] = v
-                if k == "isXbox360Gamerpic":
-                    new_merged["deviceType"] = last_seen.get("deviceType")
-                    new_merged["titleId"] = last_seen.get("titleId")
-                    new_merged["titleName"] = last_seen.get("titleName")
-                    inserted = True
-            if not inserted:
-                new_merged["deviceType"] = last_seen.get("deviceType")
-                new_merged["titleId"] = last_seen.get("titleId")
-                new_merged["titleName"] = last_seen.get("titleName")
-            merged = new_merged
+
+        # Add presenceState
+        merged["presenceState"] = presence.get("state", "Offline")
+
+        # Add lastSeen if available
+        if "lastSeen" in presence:
+            merged["lastSeen"] = presence["lastSeen"]
+            if "timestamp" in presence["lastSeen"]:
+                merged["lastSeenDateTimeUtc"] = presence["lastSeen"]["timestamp"]
+
+        # Add current device & title if online
+        if merged["presenceState"] == "Online" and "devices" in presence and presence["devices"]:
+            active_device = presence["devices"][0]
+            merged["deviceType"] = active_device.get("type", "Unknown")
+            if "titles" in active_device and active_device["titles"]:
+                active_title = active_device["titles"][0]
+                merged["titleId"] = active_title.get("id")
+                merged["titleName"] = active_title.get("name", "No game")
+                merged["placement"] = active_title.get("placement")
+                merged["titleState"] = active_title.get("state")
+
         final.append(merged)
+
     return final
 
 def get_username(user: Dict) -> str:
@@ -139,25 +148,34 @@ def send_discord_message(username: str, status: str, details: str = ""):
         print(f"Discord failed: {e}")
 
 def load_previous_data() -> Dict:
-    """Load ApiData.json from previous commit (HEAD~1)"""
     try:
-        # Temp checkout previous commit's ApiData.json
-        subprocess.run(["git", "checkout", "HEAD~1", "--", "ApiData.json"], cwd=CLONE_DIR, check=True, capture_output=True)
+        result = subprocess.run(
+            ["git", "checkout", "HEAD~1", "--", "ApiData.json"],
+            cwd=CLONE_DIR,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            print("No previous commit → first run, no messages")
+            return {}
+
         prev_path = CLONE_DIR / OUTPUT_FILE
         if prev_path.exists():
             with open(prev_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return {u.get("xuid"): u for u in data if u.get("xuid")}
         return {}
-    except subprocess.CalledProcessError:
-        print("No previous commit found → first run, no messages")
-        return {}
     except Exception as e:
-        print(f"Failed to load previous data: {e}")
+        print(f"Failed to load previous: {e}")
         return {}
     finally:
-        # Restore current version
-        subprocess.run(["git", "checkout", "HEAD", "--", "ApiData.json"], cwd=CLONE_DIR, check=False, capture_output=True)
+        subprocess.run(
+            ["git", "checkout", "HEAD", "--", "ApiData.json"],
+            cwd=CLONE_DIR,
+            check=False,
+            capture_output=True
+        )
 
 def main():
     original_dir = Path.cwd()
@@ -170,10 +188,8 @@ def main():
         people, presence = fetch_all(xuids)
         final_data = merge_data(people, presence)
 
-        # Load previous commit's data
         prev_data = load_previous_data()
 
-        # Check for status changes
         for user in final_data:
             xuid = user.get("xuid")
             if not xuid:
@@ -185,17 +201,15 @@ def main():
             prev_user = prev_data.get(xuid, {})
             prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
 
-            # Only if there was a previous state and it changed
             if prev_state is not None and current_state != prev_state:
                 if current_state == "Online":
                     send_discord_message(username, "Online")
                 else:
                     ls = user.get("lastSeen", {}) or {}
-                    device = ls.get("deviceType", "Unknown")
-                    game = ls.get("titleName") or "No game"
+                    device = user.get("deviceType", ls.get("deviceType", "Unknown"))
+                    game = user.get("titleName", ls.get("titleName", "No game"))
                     send_discord_message(username, "Offline", f"{device} - {game}")
 
-        # Save latest
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=4, ensure_ascii=False)
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
