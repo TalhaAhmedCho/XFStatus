@@ -157,7 +157,7 @@ def send_discord_message(user: Dict):
         # ✅ FINAL LOGIC
         if presence_state == state == presence_text:
             lines.append(f"{device}")
-        elif presence_text == state:
+        elif presence_state == state:
             lines.append(f"{device} - {presence_text}")
         else:
             lines.append(f"{device} - {presence_text} - {presence_state}")
@@ -174,11 +174,11 @@ def send_discord_message(user: Dict):
         # ✅ FINAL LOGIC
         if presence_state == state == presence_text:
             lines.append(f"{device}")
-        elif presence_text == state:
+        elif presence_state == state:
             lines.append(f"{device} - {presence_text}")
         else:
             lines.append(f"{device} - {presence_text} - {presence_state}")
-            
+
     embed = {
         "author": {
             "name": gamertag,
