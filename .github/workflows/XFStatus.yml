@@ -1,11 +1,10 @@
 name: Xbox Friend Status
 
 on:
-  workflow_dispatch:        # manual run option (যেকোনো সময় চালাতে পারবে)
+  workflow_dispatch:
 
-# GITHUB_TOKEN-এর default permission কমিয়ে রাখা ভালো (security best practice)
 permissions:
-  contents: write          # শুধু repo-তে write দরকার (commit + push করার জন্য)
+  contents: write
 
 jobs:
   update-xbox-status:
@@ -15,30 +14,16 @@ jobs:
       - name: Checkout this repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}   # default token দিয়ে checkout
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # -------------------------------------------------------
-      # যদি private_repo আরেকটা আলাদা repo হয় → নিচের step টা enable করো
-      # -------------------------------------------------------
       - name: Clone or update private repo safely
         env:
-          PAT: ${{ secrets.PA_TOKEN }}           # তোমার PAT (repo access আছে এমন)
-          PREPO_NAME: ${{ secrets.PREPO_NAME }}  # যেমন: username/private-repo-name
+          PAT: ${{ secrets.PA_TOKEN }}
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}
         run: |
-          # আগের clone থাকলে মুছে ফেলা (clean start)
           rm -rf private_repo 2>/dev/null || true
-
-          # credential helper দিয়ে PAT inject করা → URL-এ টোকেন দেখা যাবে না
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
-
-          # clone করা (টোকেন URL-এ না থাকায় log-এ leak হবে না)
           git clone https://github.com/${PREPO_NAME}.git private_repo
-
-          # optional: sparse-checkout যদি শুধু কয়েকটা ফাইল লাগে
-          # cd private_repo
-          # git sparse-checkout init --cone
-          # git sparse-checkout set xuids.txt
-          # git checkout
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,26 +38,19 @@ jobs:
       - name: Run Python script to update status
         env:
           API_KEY: ${{ secrets.API_KEY }}
-          # PA_TOKEN আর দরকার নেই script-এ যদি git push এখান থেকে না করো
-          # PREPO_NAME: ${{ secrets.PREPO_NAME }}   # script-এ লাগলে রাখো
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}      # ← এটা যোগ করা হয়েছে
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}  # optional, script-এ লাগলে
         run: python -u status.py
 
-      # -------------------------------------------------------
-      # যদি script নিজে private_repo-তে commit + push করে → নিচের step লাগবে না
-      # কিন্তু script-এ push করলে → এখানে আবার PAT inject করতে হবে
-      # -------------------------------------------------------
-      - name: Commit and push changes (if script didn't)
-        if: always()   # script fail করলেও চেক করতে পারে (optional)
+      - name: Commit and push changes (fallback, if script didn't push)
+        if: failure()  # শুধু যদি script fail করে
         env:
           PAT: ${{ secrets.PA_TOKEN }}
         run: |
           cd private_repo || exit 0
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-
           git add ApiData.json || true
           git diff --quiet ApiData.json || git commit -m "Update Xbox friend status [auto]"
-
-          # আবার credential helper set (push-এর জন্য)
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
-          git push origin HEAD:main || echo "No changes or push failed (maybe no diff)"
+          git push origin HEAD:main || echo "No changes or push failed"
