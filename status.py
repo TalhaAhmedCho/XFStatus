@@ -17,12 +17,14 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")  # optional
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
 PREV_FILE = "ApiData_previous.json"
+OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE          # ← এটা যোগ করা হয়েছে
+PREV_IN_REPO = CLONE_DIR / PREV_FILE              # ← এটা যোগ করা হয়েছে
 
 SLEEP_BETWEEN_REQUESTS = 2.5
 MAX_RETRIES = 3
@@ -191,7 +193,7 @@ def main():
 
         final_data = merge_data(people, presence)
 
-        # Load previous data for comparison
+        # Load previous data
         prev_data = {}
         prev_path = CLONE_DIR / PREV_FILE
         if prev_path.exists():
@@ -211,7 +213,6 @@ def main():
             prev_user = prev_data.get(xuid, {})
             prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
 
-            # Only send if status changed or first time
             if current_state != prev_state or not prev_user:
                 if current_state == "Online":
                     status_text = "Online"
@@ -225,15 +226,15 @@ def main():
 
                 send_discord_message(username, status_text, details)
 
-        # Save current as latest
+        # Save current
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=4, ensure_ascii=False)
 
         print(f"Data written to {OUTPUT_FILE}")
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
-        # Save as previous for next run
-        shutil.copy(OUTPUT_FILE, CLONE_DIR / PREV_FILE)
+        # Save previous for next run
+        shutil.copy(OUTPUT_FILE, PREV_IN_REPO)
 
         os.chdir(CLONE_DIR)
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
