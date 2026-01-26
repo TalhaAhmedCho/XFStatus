@@ -8,22 +8,29 @@ import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
+
+# ================== ENV ==================
 def require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
+
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
+
+# ================== PATHS ==================
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
 OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
 
+
+# ================== CONFIG ==================
 SLEEP_BETWEEN_REQUESTS = 2.5
 MAX_RETRIES = 3
 RETRY_BACKOFF = 5
@@ -34,136 +41,155 @@ headers = {
     "User-Agent": "GitHub-Action-XBL-Updater/1.0"
 }
 
+
+# ================== GIT ==================
 def clone_or_update_repo():
     if CLONE_DIR.exists():
-        print(f"Removing existing clone directory: {CLONE_DIR}")
         shutil.rmtree(CLONE_DIR, ignore_errors=True)
 
-    print(f"Cloning repository: {PREPO_NAME} (safely)")
     subprocess.run(
         ["git", "config", "--global",
          "url.https://x-access-token:" + PA_TOKEN + "@github.com/.insteadOf",
          "https://github.com/"],
         check=True
     )
-    subprocess.run(["git", "clone", f"https://github.com/{PREPO_NAME}.git", str(CLONE_DIR)], check=True)
+    subprocess.run(
+        ["git", "clone", f"https://github.com/{PREPO_NAME}.git", str(CLONE_DIR)],
+        check=True
+    )
 
+
+# ================== DATA ==================
 def read_xuids() -> List[str]:
-    if not XUID_FILE.exists():
-        raise FileNotFoundError(f"xuids.txt not found in {CLONE_DIR}")
     with open(XUID_FILE, "r", encoding="utf-8") as f:
-        xuids = [line.strip() for line in f if line.strip()]
-    print(f"Loaded {len(xuids)} XUIDs from xuids.txt")
-    return xuids
+        return [line.strip() for line in f if line.strip()]
+
 
 def fetch_with_retry(url: str, desc: str) -> Any:
     for attempt in range(MAX_RETRIES + 1):
         try:
-            resp = requests.get(url, headers=headers, timeout=25)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            status = getattr(e.response, 'status_code', None)
-            print(f"Retry {attempt+1} failed for {desc}: {status or 'No response'}")
+            r = requests.get(url, headers=headers, timeout=25)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF * (2 ** attempt))
             else:
                 raise
 
+
 def fetch_all(xuids: List[str]):
-    if not xuids:
-        return [], []
+    ids = ",".join(xuids)
 
-    ids_str = ",".join(xuids)
-    print(f"Fetching all {len(xuids)} users...")
-
-    account_url = f"https://xbl.io/api/v2/account/{ids_str}"
-    people = fetch_with_retry(account_url, "Account").get("people", [])
+    people = fetch_with_retry(
+        f"https://xbl.io/api/v2/account/{ids}", "Account"
+    ).get("people", [])
 
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-    presence_url = f"https://xbl.io/api/v2/{ids_str}/presence"
-    presence_data = fetch_with_retry(presence_url, "Presence")
-    presence_list = presence_data if isinstance(presence_data, list) else presence_data.get("presence", []) or []
+    presence_raw = fetch_with_retry(
+        f"https://xbl.io/api/v2/{ids}/presence", "Presence"
+    )
+    presence = presence_raw if isinstance(presence_raw, list) else presence_raw.get("presence", [])
 
-    return people, presence_list
+    return people, presence
+
 
 def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
-    presence_map = {p.get("xuid"): p for p in presence_list if p.get("xuid")}
+    presence_map = {p["xuid"]: p for p in presence_list if p.get("xuid")}
 
-    final = []
-    for user in people:
-        xuid = user.get("xuid")
-        if not xuid:
-            continue
-
-        merged = {
-            "account": user,                         # Account API result
-            "presence": presence_map.get(xuid, {})   # Presence API result
+    return [
+        {
+            "account": user,
+            "presence": presence_map.get(user.get("xuid"), {})
         }
+        for user in people if user.get("xuid")
+    ]
 
-        final.append(merged)
 
-    return final
-
-def get_username(user: Dict) -> str:
-    return user.get("gamertag") or user.get("displayName") or user.get("realName") or "Unknown"
-
-def send_discord_message(username: str, status: str, details: str = ""):
+# ================== DISCORD ==================
+def send_discord_message(user: Dict):
     if not DISCORD_WEBHOOK_URL:
-        print("No webhook → skip message")
         return
-    color = 0x00ff00 if status == "Online" else 0xff0000
+
+    account = user.get("account", {})
+    presence = user.get("presence", {})
+
+    gamertag = account.get("gamertag", "Unknown")
+    avatar = account.get("displayPicRaw")
+    state = presence.get("state", "Offline")
+
+    color = 0x00ff00 if state == "Online" else 0xff0000
+
+    lines = [f"**{state}**"]
+
+    if state == "Online":
+        device = "Unknown"
+        devices = presence.get("devices", [])
+        if devices:
+            device = devices[0].get("type", "Unknown")
+
+        presence_text = account.get("presenceText", "")
+        presence_state = account.get("presenceState", "")
+
+        lines.append(f"{device} - {presence_text} - {presence_state}")
+
     embed = {
-        "title": username,
-        "description": f"**{status}**\n{details}".strip(),
+        "author": {
+            "name": gamertag,
+            "icon_url": avatar
+        },
+        "description": "\n".join(lines),
         "color": color,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "footer": {"text": "XFStatus Auto"}
+        "timestamp": datetime.datetime.utcnow().isoformat()
     }
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
-        print(f"Sent: {username} → {status}")
-    except Exception as e:
-        print(f"Discord failed: {e}")
 
-def load_previous_data() -> Dict:
-    try:
-        result = subprocess.run(
-            ["git", "checkout", "HEAD~1", "--", "ApiData.json"],
-            cwd=CLONE_DIR,
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if result.returncode != 0:
-            print("No previous commit → first run, no messages")
-            return {}
+    requests.post(
+        DISCORD_WEBHOOK_URL,
+        json={"embeds": [embed]},
+        timeout=10
+    )
 
-        prev_path = CLONE_DIR / OUTPUT_FILE
-        if prev_path.exists():
-            with open(prev_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return {u.get("xuid"): u for u in data if u.get("xuid")}
-        return {}
-    except Exception as e:
-        print(f"Failed to load previous: {e}")
-        return {}
-    finally:
+
+# ================== PREVIOUS STATE ==================
+def load_previous_data() -> Dict[str, Dict]:
+    try:
         subprocess.run(
-            ["git", "checkout", "HEAD", "--", "ApiData.json"],
+            ["git", "checkout", "HEAD~1", "--", OUTPUT_FILE],
             cwd=CLONE_DIR,
             check=False,
             capture_output=True
         )
 
+        path = CLONE_DIR / OUTPUT_FILE
+        if not path.exists():
+            return {}
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        return {
+            u["account"]["xuid"]: u
+            for u in data
+            if u.get("account", {}).get("xuid")
+        }
+
+    finally:
+        subprocess.run(
+            ["git", "checkout", "HEAD", "--", OUTPUT_FILE],
+            cwd=CLONE_DIR,
+            check=False,
+            capture_output=True
+        )
+
+
+# ================== MAIN ==================
 def main():
     original_dir = Path.cwd()
+
     try:
         clone_or_update_repo()
         xuids = read_xuids()
-        if not xuids:
-            return
 
         people, presence = fetch_all(xuids)
         final_data = merge_data(people, presence)
@@ -171,48 +197,43 @@ def main():
         prev_data = load_previous_data()
 
         for user in final_data:
-            xuid = user.get("xuid")
+            account = user.get("account", {})
+            presence_now = user.get("presence", {})
+
+            xuid = account.get("xuid")
             if not xuid:
                 continue
 
-            username = get_username(user)
-            current_state = user.get("state", "Offline")  # presence API-এ "state" field আছে
+            current_state = presence_now.get("state", "Offline")
 
-            prev_user = prev_data.get(xuid, {})
-            prev_state = prev_user.get("state", "Offline") if prev_user else None
+            prev_user = prev_data.get(xuid)
+            prev_state = (
+                prev_user.get("presence", {}).get("state")
+                if prev_user else None
+            )
 
             if prev_state is not None and current_state != prev_state:
-                if current_state == "Online":
-                    send_discord_message(username, "Online")
-                else:
-                    ls = user.get("lastSeen", {}) or {}
-                    device = ls.get("deviceType", "Unknown")
-                    game = ls.get("titleName") or "No game"
-                    send_discord_message(username, "Offline", f"{device} - {game}")
+                send_discord_message(user)
 
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=4, ensure_ascii=False)
+
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
         os.chdir(CLONE_DIR)
-        subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
-        subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
-        subprocess.run(["git", "add", "ApiData.json"], check=True)
+        subprocess.run(["git", "add", OUTPUT_FILE], check=True)
 
-        status_out = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
-        if status_out:
+        if subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            subprocess.run(["git", "commit", "-m", f"Update ApiData.json [auto] - {now}"], check=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"Update ApiData.json [auto] - {now}"],
+                check=True
+            )
             subprocess.run(["git", "push"], check=True)
-            print("Committed & pushed")
-        else:
-            print("No changes")
 
-    except Exception as e:
-        print(f"ERROR: {e}")
-        raise
     finally:
         os.chdir(original_dir)
+
 
 if __name__ == "__main__":
     main()
