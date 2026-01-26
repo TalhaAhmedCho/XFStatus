@@ -17,7 +17,7 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
@@ -104,18 +104,22 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
         # Root level: presenceState
         merged["presenceState"] = presence.get("state", "Offline")
 
-        # Nested: presenceDetails
+        # Root level: lastSeenDateTimeUtc (single timestamp)
+        if "lastSeen" in presence and "timestamp" in presence["lastSeen"]:
+            merged["lastSeenDateTimeUtc"] = presence["lastSeen"]["timestamp"]
+
+        # presenceDetails: nested object
         presence_details = {}
 
-        # If online, add devices
+        # Devices if online
         if merged["presenceState"] == "Online" and "devices" in presence:
             presence_details["devices"] = presence["devices"]
 
-        # Add lastSeen if available
+        # lastSeen without timestamp (no duplicate)
         if "lastSeen" in presence:
-            presence_details["lastSeen"] = presence["lastSeen"]
-            if "timestamp" in presence["lastSeen"]:
-                merged["lastSeenDateTimeUtc"] = presence["lastSeen"]["timestamp"]
+            last_seen_copy = presence["lastSeen"].copy()
+            last_seen_copy.pop("timestamp", None)  # remove timestamp from nested
+            presence_details["lastSeen"] = last_seen_copy
 
         merged["presenceDetails"] = presence_details
 
