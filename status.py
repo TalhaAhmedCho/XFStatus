@@ -17,15 +17,18 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")  # ← নতুন: optional, না থাকলে skip
 
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
+PREV_FILE = "ApiData_previous.json"          # ← নতুন: previous state
 OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
+PREV_IN_REPO = CLONE_DIR / PREV_FILE
 
-SLEEP_BETWEEN_REQUESTS = 2.5   # দুটো endpoint-এর মধ্যে
-MAX_RETRIES = 3                # 500/429 error-এ retry
-RETRY_BACKOFF = 5              # seconds, exponential
+SLEEP_BETWEEN_REQUESTS = 2.5
+MAX_RETRIES = 3
+RETRY_BACKOFF = 5
 
 headers = {
     "x-authorization": API_KEY,
@@ -77,16 +80,11 @@ def fetch_with_retry(url: str, desc: str, retries: int = MAX_RETRIES) -> Any:
             print(f"Attempt {attempt+1}/{retries+1} failed for {desc}: {e}")
             if status:
                 print(f"   Status: {status}")
-                if status == 429:
-                    print("   Rate limited - waiting longer...")
-                elif status >= 500:
-                    print("   Server error - retrying...")
             if e.response:
                 try:
                     print(f"   Response snippet: {e.response.text[:300]}")
                 except:
                     pass
-
             if attempt < retries:
                 sleep_time = RETRY_BACKOFF * (2 ** attempt)
                 print(f"   Retrying in {sleep_time}s...")
@@ -102,14 +100,12 @@ def fetch_all(xuids: List[str]) -> tuple[List[Dict], List[Dict]]:
     masked = mask_xuids(xuids)
     print(f"Fetching all {len(xuids)} users in single batch [{masked}]...")
 
-    # Account info
     account_url = f"https://xbl.io/api/v2/account/{ids_str}"
     account_data = fetch_with_retry(account_url, "Account endpoint")
     people = account_data.get("people", []) if isinstance(account_data, dict) else []
 
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-    # Presence
     presence_url = f"https://xbl.io/api/v2/{ids_str}/presence"
     presence_data = fetch_with_retry(presence_url, "Presence endpoint")
     presence_list = presence_data if isinstance(presence_data, list) else presence_data.get("presence", []) or []
@@ -154,6 +150,30 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
     return final
 
+def send_discord_message(username: str, status: str, details: str = ""):
+    if not DISCORD_WEBHOOK:
+        print("DISCORD_WEBHOOK_URL not set → skipping Discord message")
+        return
+
+    color = 0x00ff00 if "Online" in status else 0xff0000
+
+    embed = {
+        "title": f"{username}",
+        "description": f"**{status}**\n{details}",
+        "color": color,
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "footer": {"text": "XFStatus Auto Update"}
+    }
+
+    payload = {"embeds": [embed]}
+
+    try:
+        resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+        resp.raise_for_status()
+        print(f"Discord message sent for {username}: {status}")
+    except Exception as e:
+        print(f"Failed to send Discord message: {e}")
+
 def main():
     original_dir = Path.cwd()
     try:
@@ -171,16 +191,53 @@ def main():
 
         final_data = merge_data(people, presence)
 
+        # Load previous data if exists
+        prev_data = {}
+        prev_path = CLONE_DIR / PREV_FILE
+        if prev_path.exists():
+            with open(prev_path, "r", encoding="utf-8") as f:
+                prev_list = json.load(f)
+                prev_data = {u.get("xuid"): u for u in prev_list if u.get("xuid")}
+
+        # Check for status changes and send messages
+        for user in final_data:
+            xuid = user.get("xuid")
+            if not xuid:
+                continue
+
+            gamertag = user.get("gamertag", "Unknown")
+            current_online = bool(user.get("lastSeenDateTimeUtc"))  # rough check
+
+            prev_user = prev_data.get(xuid, {})
+            prev_online = bool(prev_user.get("lastSeenDateTimeUtc"))
+
+            if current_online != prev_online or not prev_user:  # change or first time
+                if current_online:
+                    status_text = "Online"
+                    details = ""
+                else:
+                    last_seen = user.get("lastSeen", {}) or {}
+                    device = last_seen.get("deviceType", "Unknown")
+                    game = last_seen.get("titleName", "No game")
+                    status_text = "Offline"
+                    details = f"{device} - {game}"
+
+                send_discord_message(gamertag, status_text, details)
+
+        # Save current as latest
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=4, ensure_ascii=False)
 
         print(f"Data written to {OUTPUT_FILE}")
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
+        # Save as previous for next run
+        shutil.copy(OUTPUT_FILE, CLONE_DIR / PREV_FILE)
+
         os.chdir(CLONE_DIR)
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
         subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
-        subprocess.run(["git", "add", "ApiData.json"], check=True)
+        subprocess.run(["git", "add", "ApiData.json", "ApiData_previous.json"], check=True)
 
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -188,7 +245,6 @@ def main():
         )
 
         if status_result.stdout.strip():
-            # ← এখানে timestamp যোগ করা হয়েছে
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             commit_msg = f"Update ApiData.json [auto] - {now}"
             subprocess.run(["git", "commit", "-m", commit_msg], check=True)
