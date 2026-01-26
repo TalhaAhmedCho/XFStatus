@@ -22,7 +22,6 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 CLONE_DIR = Path("private_repo")
 XUID_FILE = CLONE_DIR / "xuids.txt"
 OUTPUT_FILE = "ApiData.json"
-PREV_FILE = "ApiData_previous.json"
 OUTPUT_IN_REPO = CLONE_DIR / OUTPUT_FILE
 
 SLEEP_BETWEEN_REQUESTS = 2.5
@@ -64,10 +63,8 @@ def fetch_with_retry(url: str, desc: str) -> Any:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
-            status_code = None
-            if e.response is not None:
-                status_code = e.response.status_code
-            print(f"Retry {attempt+1}/{MAX_RETRIES+1} failed for {desc}: {status_code or 'No response'}")
+            status = getattr(e.response, 'status_code', None)
+            print(f"Retry {attempt+1} failed for {desc}: {status or 'No response'}")
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF * (2 ** attempt))
             else:
@@ -78,15 +75,15 @@ def fetch_all(xuids: List[str]):
         return [], []
 
     ids_str = ",".join(xuids)
-    print(f"Fetching all {len(xuids)} users in single batch...")
+    print(f"Fetching all {len(xuids)} users...")
 
     account_url = f"https://xbl.io/api/v2/account/{ids_str}"
-    people = fetch_with_retry(account_url, "Account endpoint").get("people", [])
+    people = fetch_with_retry(account_url, "Account").get("people", [])
 
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
     presence_url = f"https://xbl.io/api/v2/{ids_str}/presence"
-    presence_data = fetch_with_retry(presence_url, "Presence endpoint")
+    presence_data = fetch_with_retry(presence_url, "Presence")
     presence_list = presence_data if isinstance(presence_data, list) else presence_data.get("presence", []) or []
 
     return people, presence_list
@@ -121,10 +118,11 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
     return final
 
 def get_username(user: Dict) -> str:
-    return user.get("gamertag") or user.get("displayName") or user.get("realName") or "Unknown User"
+    return user.get("gamertag") or user.get("displayName") or user.get("realName") or "Unknown"
 
 def send_discord_message(username: str, status: str, details: str = ""):
     if not DISCORD_WEBHOOK_URL:
+        print("No webhook → skip message")
         return
     color = 0x00ff00 if status == "Online" else 0xff0000
     embed = {
@@ -132,13 +130,31 @@ def send_discord_message(username: str, status: str, details: str = ""):
         "description": f"**{status}**\n{details}".strip(),
         "color": color,
         "timestamp": datetime.datetime.utcnow().isoformat(),
-        "footer": {"text": "XFStatus Auto Update"}
+        "footer": {"text": "XFStatus Auto"}
     }
     try:
         requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
-        print(f"Discord → {username} is now {status}")
+        print(f"Sent: {username} → {status}")
     except Exception as e:
         print(f"Discord failed: {e}")
+
+def load_previous_data():
+    """Load ApiData.json from previous commit (HEAD~1)"""
+    try:
+        # Temporary checkout to previous commit
+        subprocess.run(["git", "checkout", "HEAD~1", "--", "ApiData.json"], cwd=CLONE_DIR, check=True)
+        prev_path = CLONE_DIR / OUTPUT_FILE
+        if prev_path.exists():
+            with open(prev_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {u.get("xuid"): u for u in data if u.get("xuid")}
+        return {}
+    except Exception as e:
+        print(f"Could not load previous data: {e}")
+        return {}
+    finally:
+        # Restore latest
+        subprocess.run(["git", "checkout", "HEAD", "--", "ApiData.json"], cwd=CLONE_DIR, check=False)
 
 def main():
     original_dir = Path.cwd()
@@ -151,13 +167,10 @@ def main():
         people, presence = fetch_all(xuids)
         final_data = merge_data(people, presence)
 
-        prev_data = {}
-        prev_path = CLONE_DIR / PREV_FILE
-        if prev_path.exists():
-            with open(prev_path, "r", encoding="utf-8") as f:
-                prev_list = json.load(f)
-                prev_data = {u.get("xuid"): u for u in prev_list if u.get("xuid")}
+        # Load previous commit's data
+        prev_data = load_previous_data()
 
+        # Check changes
         for user in final_data:
             xuid = user.get("xuid")
             if not xuid:
@@ -167,7 +180,7 @@ def main():
             prev_user = prev_data.get(xuid, {})
             prev_state = prev_user.get("presenceState", "Offline") if prev_user else None
 
-            if current_state != prev_state or not prev_user:
+            if current_state != prev_state and prev_state is not None:  # change only, skip first run
                 if current_state == "Online":
                     send_discord_message(username, "Online")
                 else:
@@ -176,24 +189,24 @@ def main():
                     game = ls.get("titleName") or "No game"
                     send_discord_message(username, "Offline", f"{device} - {game}")
 
+        # Save latest
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=4, ensure_ascii=False)
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
-
-        shutil.copy(OUTPUT_FILE, prev_path)
 
         os.chdir(CLONE_DIR)
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
         subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
         subprocess.run(["git", "add", "ApiData.json"], check=True)
 
-        if subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
+        status_out = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+        if status_out:
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             subprocess.run(["git", "commit", "-m", f"Update ApiData.json [auto] - {now}"], check=True)
             subprocess.run(["git", "push"], check=True)
-            print("Changes committed and pushed")
+            print("Committed & pushed")
         else:
-            print("No changes in ApiData.json")
+            print("No changes")
 
     except Exception as e:
         print(f"ERROR: {e}")
