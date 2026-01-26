@@ -1,10 +1,12 @@
 name: Xbox Friend Status
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:          # manual trigger
+  # schedule:                 # চাইলে cron যোগ করো, যেমন:
+  #   - cron: '0 */2 * * *'   # প্রতি ২ ঘণ্টায় (rate limit মাথায় রেখে)
 
 permissions:
-  contents: write
+  contents: write             # repo-তে write access দরকার
 
 jobs:
   update-xbox-status:
@@ -22,35 +24,56 @@ jobs:
           PREPO_NAME: ${{ secrets.PREPO_NAME }}
         run: |
           rm -rf private_repo 2>/dev/null || true
+          
+          # Credential helper set (token URL-এ না দেখানোর জন্য)
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
+          
+          # Clone
           git clone https://github.com/${PREPO_NAME}.git private_repo
+          
+          # Optional: যদি শুধু xuids.txt লাগে → sparse checkout
+          # cd private_repo
+          # git sparse-checkout init --cone
+          # git sparse-checkout set xuids.txt ApiData.json ApiData_previous.json
+          # git checkout
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Run Python script to update status
+      - name: Run Python script (fetch & update status)
         env:
           API_KEY: ${{ secrets.API_KEY }}
-          PA_TOKEN: ${{ secrets.PA_TOKEN }}      # ← এটা যোগ করা হয়েছে
-          PREPO_NAME: ${{ secrets.PREPO_NAME }}  # optional, script-এ লাগলে
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}           # script-এ git push-এর জন্য
+          PREPO_NAME: ${{ secrets.PREPO_NAME }}       # optional
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}  # Discord notification-এর জন্য
         run: python -u status.py
 
-      - name: Commit and push changes (fallback, if script didn't push)
-        if: failure()  # শুধু যদি script fail করে
+      - name: Fallback - Commit & push if script failed or missed
+        if: always()   # script fail করলেও চেষ্টা করবে
         env:
           PAT: ${{ secrets.PA_TOKEN }}
         run: |
           cd private_repo || exit 0
-          git config user.name "GitHub Actions"
+          
+          git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
-          git add ApiData.json || true
-          git diff --quiet ApiData.json || git commit -m "Update Xbox friend status [auto]"
+          
+          # Add changed files
+          git add ApiData.json ApiData_previous.json || true
+          
+          # Timestamped commit message
+          NOW=$(date '+%Y-%m-%d %H:%M:%S %Z')
+          COMMIT_MSG="Update Xbox friend status [auto] - $NOW (fallback)"
+          
+          git diff --quiet || git commit -m "$COMMIT_MSG"
+          
+          # Push using credential helper
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "https://github.com/"
-          git push origin HEAD:main || echo "No changes or push failed"
+          git push origin HEAD:main || echo "No changes to push or push failed"
