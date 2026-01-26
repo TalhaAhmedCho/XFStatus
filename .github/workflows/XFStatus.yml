@@ -58,7 +58,7 @@ jobs:
           # Mark as safe directory
           git config --global --add safe.directory "$(pwd)"
           
-          git config user.name "GitHub Actions Bot"
+          git config user.name "github-actions"
           git config user.email "actions@github.com"
           
           # Only add ApiData.json (no previous file)
