@@ -20,7 +20,7 @@ def require_env(name: str) -> str:
 API_KEY = require_env("API_KEY")
 PA_TOKEN = require_env("PA_TOKEN")
 PREPO_NAME = require_env("PREPO_NAME")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 
 # ================== PATHS ==================
@@ -109,7 +109,7 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
 # ================== DISCORD ==================
 def send_discord_message(user: Dict):
-    if not DISCORD_WEBHOOK_URL:
+    if not DISCORD_WEBHOOK:
         return
 
     account = user.get("account", {})
@@ -145,7 +145,7 @@ def send_discord_message(user: Dict):
     }
 
     requests.post(
-        DISCORD_WEBHOOK_URL,
+        DISCORD_WEBHOOK,
         json={"embeds": [embed]},
         timeout=10
     )
