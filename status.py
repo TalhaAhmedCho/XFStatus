@@ -145,7 +145,7 @@ def send_discord_message(user: Dict):
 
     lines = [f"### {state}"]
 
-    if state == "Online" or state == "Away":
+    if state == "Online":
         presence_state = account.get("presenceState", "")
         presence_text = account.get("presenceText", "")
 
@@ -162,6 +162,23 @@ def send_discord_message(user: Dict):
         else:
             lines.append(f"{device} - {presence_text} - {presence_state}")
 
+    if state == "Away":
+        presence_state = account.get("presenceState", "")
+        presence_text = account.get("presenceText", "")
+
+        device = "Unknown"
+        devices = presence.get("devices", [])
+        if devices:
+            device = devices[0].get("type", "Unknown")
+
+        # ✅ FINAL LOGIC
+        if presence_state == state == presence_text:
+            lines.append(f"{device}")
+        elif presence_text == state:
+            lines.append(f"{device} - {presence_text}")
+        else:
+            lines.append(f"{device} - {presence_text} - {presence_state}")
+            
     embed = {
         "author": {
             "name": gamertag,
