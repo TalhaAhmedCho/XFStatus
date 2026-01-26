@@ -89,7 +89,6 @@ def fetch_all(xuids: List[str]):
     return people, presence_list
 
 def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
-    # presence_map: xuid → full presence dict (state, devices, lastSeen etc.)
     presence_map = {p.get("xuid"): p for p in presence_list if p.get("xuid")}
 
     final = []
@@ -102,25 +101,23 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
 
         merged = user.copy()
 
-        # Add presenceState
+        # Root level: presenceState
         merged["presenceState"] = presence.get("state", "Offline")
+
+        # Nested: presenceDetails
+        presence_details = {}
+
+        # If online, add devices
+        if merged["presenceState"] == "Online" and "devices" in presence:
+            presence_details["devices"] = presence["devices"]
 
         # Add lastSeen if available
         if "lastSeen" in presence:
-            merged["lastSeen"] = presence["lastSeen"]
+            presence_details["lastSeen"] = presence["lastSeen"]
             if "timestamp" in presence["lastSeen"]:
                 merged["lastSeenDateTimeUtc"] = presence["lastSeen"]["timestamp"]
 
-        # Add current device & title if online
-        if merged["presenceState"] == "Online" and "devices" in presence and presence["devices"]:
-            active_device = presence["devices"][0]
-            merged["deviceType"] = active_device.get("type", "Unknown")
-            if "titles" in active_device and active_device["titles"]:
-                active_title = active_device["titles"][0]
-                merged["titleId"] = active_title.get("id")
-                merged["titleName"] = active_title.get("name", "No game")
-                merged["placement"] = active_title.get("placement")
-                merged["titleState"] = active_title.get("state")
+        merged["presenceDetails"] = presence_details
 
         final.append(merged)
 
@@ -206,8 +203,8 @@ def main():
                     send_discord_message(username, "Online")
                 else:
                     ls = user.get("lastSeen", {}) or {}
-                    device = user.get("deviceType", ls.get("deviceType", "Unknown"))
-                    game = user.get("titleName", ls.get("titleName", "No game"))
+                    device = ls.get("deviceType", "Unknown")
+                    game = ls.get("titleName") or "No game"
                     send_discord_message(username, "Offline", f"{device} - {game}")
 
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
