@@ -91,7 +91,7 @@ def fetch_all(xuids: List[str]):
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
     presence_raw = fetch_with_retry(
-        f"https://xbl.io/api/v2/{ids}/presence}"
+        f"https://xbl.io/api/v2/{ids}/presence"
     )
 
     presence = presence_raw if isinstance(presence_raw, list) else presence_raw.get("presence", [])
