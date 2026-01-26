@@ -43,7 +43,7 @@ headers = {
 
 
 # ================= GIT =================
-def clone_or_update_repo():
+def clone_repo():
     if CLONE_DIR.exists():
         shutil.rmtree(CLONE_DIR, ignore_errors=True)
 
@@ -91,7 +91,7 @@ def fetch_all(xuids: List[str]):
     time.sleep(SLEEP_BETWEEN_REQUESTS)
 
     presence_raw = fetch_with_retry(
-        f"https://xbl.io/api/v2/{ids}/presence"
+        f"https://xbl.io/api/v2/{ids}/presence}"
     )
 
     presence = presence_raw if isinstance(presence_raw, list) else presence_raw.get("presence", [])
@@ -110,6 +110,22 @@ def merge_data(people: List[Dict], presence_list: List[Dict]) -> List[Dict]:
     ]
 
 
+# ================= PREVIOUS DATA =================
+def load_repo_data() -> Dict[str, Dict]:
+    path = CLONE_DIR / OUTPUT_FILE
+    if not path.exists():
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return {
+        u["account"]["xuid"]: u
+        for u in data
+        if u.get("account", {}).get("xuid")
+    }
+
+
 # ================= DISCORD =================
 def send_discord_message(user: Dict):
     if not DISCORD_WEBHOOK:
@@ -118,12 +134,12 @@ def send_discord_message(user: Dict):
     account = user.get("account", {})
     presence = user.get("presence", {})
 
-    gamertag = account.get("gamertag", "Unknown")
-    avatar = account.get("displayPicRaw")
     state = presence.get("state")
-
     if not state:
         return
+
+    gamertag = account.get("gamertag", "Unknown")
+    avatar = account.get("displayPicRaw")
 
     color = 0x00ff00 if state == "Online" else 0xff0000
 
@@ -145,42 +161,10 @@ def send_discord_message(user: Dict):
             "icon_url": avatar
         },
         "description": "\n".join(lines),
-        "color": color,
+        "color": color
     }
 
     requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]}, timeout=10)
-
-
-# ================= PREVIOUS STATE =================
-def load_previous_data() -> Dict[str, Dict]:
-    try:
-        subprocess.run(
-            ["git", "checkout", "HEAD~1", "--", OUTPUT_FILE],
-            cwd=CLONE_DIR,
-            check=False,
-            capture_output=True
-        )
-
-        path = CLONE_DIR / OUTPUT_FILE
-        if not path.exists():
-            return {}
-
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return {
-            u["account"]["xuid"]: u
-            for u in data
-            if u.get("account", {}).get("xuid")
-        }
-
-    finally:
-        subprocess.run(
-            ["git", "checkout", "HEAD", "--", OUTPUT_FILE],
-            cwd=CLONE_DIR,
-            check=False,
-            capture_output=True
-        )
 
 
 # ================= MAIN =================
@@ -188,13 +172,13 @@ def main():
     original_dir = Path.cwd()
 
     try:
-        clone_or_update_repo()
+        clone_repo()
         xuids = read_xuids()
+
+        prev_data = load_repo_data()
 
         people, presence = fetch_all(xuids)
         final_data = merge_data(people, presence)
-
-        prev_data = load_previous_data()
 
         for user in final_data:
             account = user.get("account", {})
@@ -206,7 +190,7 @@ def main():
 
             current_state = presence_now.get("state")
             if not current_state:
-                continue  # 🔒 state না থাকলে ignore
+                continue
 
             prev_user = prev_data.get(xuid)
             prev_state = (
@@ -223,7 +207,6 @@ def main():
         shutil.copy(OUTPUT_FILE, OUTPUT_IN_REPO)
 
         os.chdir(CLONE_DIR)
-
         subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
         subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
 
