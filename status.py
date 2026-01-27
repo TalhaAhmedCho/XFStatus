@@ -162,7 +162,10 @@ def send_discord_message(user: Dict):
 
         # 🔥 FINAL LOGIC (presenceText vs title-name)
         if presence_text == state == presence_state or title_name != presence_text:
-            lines.append(f"{device}")
+            if title_name != "":
+                lines.append(f"{device} - {title_name}")
+            else:
+                lines.append(f"{device}")
         else:
             lines.append(f"{device} - {presence_text}")
 
