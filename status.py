@@ -141,9 +141,9 @@ def send_discord_message(user: Dict):
     gamertag = account.get("gamertag", "Unknown")
     avatar = account.get("displayPicRaw")
 
-    color = 0x00ff00 if state == "Online" or state == "Away" else 0xff0000
+    color = 0x00ff00 if state == "Online" else 0xff0000
 
-    lines = [f"### {state}"]
+    lines = [f"**{state}**"]
 
     if state == "Online":
         presence_state = account.get("presenceState", "")
