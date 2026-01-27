@@ -145,34 +145,23 @@ def send_discord_message(user: Dict):
 
     lines = [f"### {state}"]
 
-    if state == "Online":
-        presence_state = account.get("presenceState", "")
-        presence_text = account.get("presenceText", "")
+    if state in ("Online", "Away"):
+        presence_text = account.get("presenceText", "").strip()
+        presence_state = account.get("presenceState", "").strip()
 
-        device = "Unknown"
+        device = ""
+        title_name = ""
+
         devices = presence.get("devices", [])
         if devices:
-            device = devices[0].get("type", "Unknown")
+            device = devices[0].get("type", "").strip()
 
-        # ✅ FINAL LOGIC
-        if presence_state == state == presence_text:
-            lines.append(f"{device}")
-        elif presence_state == state:
-            lines.append(f"{device} - {presence_text}")
-        else:
-            lines.append(f"{device} - {presence_text} - {presence_state}")
+            titles = devices[0].get("titles", [])
+            if titles:
+                title_name = titles[0].get("name", "").strip()
 
-    if state == "Away":
-        presence_state = account.get("presenceState", "")
-        presence_text = account.get("presenceText", "")
-
-        device = "Unknown"
-        devices = presence.get("devices", [])
-        if devices:
-            device = devices[0].get("type", "Unknown")
-
-        # ✅ FINAL LOGIC
-        if presence_state == state == presence_text:
+        # 🔥 FINAL LOGIC (presenceText vs title-name)
+        if presence_text == state == presence_state or title_name != presence_text:
             lines.append(f"{device}")
         elif presence_state == state:
             lines.append(f"{device} - {presence_text}")
