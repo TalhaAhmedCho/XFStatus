@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout workflow repo
+      - name: Checkout Workflow Repo
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
@@ -25,17 +25,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Configure git identity
+      - name: Configure Git Identity
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
 
-      - name: Run Xbox status updater
+      - name: Run Xbox Friends Status
         env:
           API_KEY: ${{ secrets.API_KEY }}
           PA_TOKEN: ${{ secrets.PA_TOKEN }}
